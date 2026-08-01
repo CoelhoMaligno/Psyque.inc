@@ -817,29 +817,7 @@ function loadFrame(name) {
     parent.postMessage({type:'psyque-form-ready',kind:'${name}'},'*');
   })();
   <\/script>`;
-  doc = doc.replace(/<\/body>/i, saveBridge + '
-<script>
-document.addEventListener("DOMContentLoaded",function(){
-  const tabs=document.querySelectorAll(".home-resource-tab");
-  const panels=document.querySelectorAll(".home-resource-panel");
-
-  tabs.forEach(function(tab){
-    tab.addEventListener("click",function(){
-      const target=tab.dataset.homePanel;
-
-      tabs.forEach(function(item){
-        item.classList.toggle("active",item===tab);
-      });
-
-      panels.forEach(function(panel){
-        panel.classList.toggle("active",panel.id==="home-panel-"+target);
-      });
-    });
-  });
-});
-</script>
-
-</body>');
+  doc = doc.replace(/<\/body>/i, saveBridge + '</body>');
 
   frames[name].srcdoc = doc;
   loaded[name] = true;
@@ -1445,6 +1423,26 @@ window.addEventListener("resize", () => {
     const f = frames[active];
     try { f.contentWindow.dispatchEvent(new Event("resize")); } catch (_) {}
   }
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  const tabs=document.querySelectorAll(".home-resource-tab");
+  const panels=document.querySelectorAll(".home-resource-panel");
+
+  tabs.forEach(function(tab){
+    tab.addEventListener("click",function(){
+      const target=tab.dataset.homePanel;
+
+      tabs.forEach(function(item){
+        item.classList.toggle("active",item===tab);
+      });
+
+      panels.forEach(function(panel){
+        panel.classList.toggle("active",panel.id==="home-panel-"+target);
+      });
+    });
+  });
 });
 </script>
 </body>
