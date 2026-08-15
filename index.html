@@ -698,6 +698,16 @@ html[data-theme="dark"] .auth-logout{
     background:#1b1a20!important;
 }
 
+
+/* Umbra / Psyque sheet-link control */
+.record-card{position:relative}
+.psyque-link-lock{position:absolute;right:12px;top:12px;width:36px;height:36px;border-radius:10px;border:1px solid var(--line);background:#101014;color:#ddd;display:grid;place-items:center;cursor:pointer;z-index:3;font-size:17px;box-shadow:0 4px 16px #0005}
+.psyque-link-lock:hover{border-color:#8f7cff;color:#fff;transform:translateY(-1px)}
+.psyque-token-dialog{position:fixed;inset:0;background:#000a;z-index:99999;display:grid;place-items:center;padding:20px}
+.psyque-token-box{width:min(520px,94vw);background:#14151b;border:1px solid #343744;border-radius:16px;padding:20px;box-shadow:0 20px 80px #000}
+.psyque-token-box h3{margin-top:0}.psyque-token-value{display:block;width:100%;padding:12px;background:#090a0e;border:1px solid #343744;color:#fff;border-radius:9px;font-family:ui-monospace,monospace;word-break:break-all;margin:12px 0}
+.psyque-token-actions{display:flex;gap:8px;flex-wrap:wrap}.psyque-token-actions button{cursor:pointer}
+
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -1375,6 +1385,19 @@ async function saveRecord(kind,data){
   setTimeout(()=>go(listId),250);
 }
 
+function closePsyqueTokenDialog(){document.querySelector('.psyque-token-dialog')?.remove()}
+async function psyqueSheetLock(ev,fichaId){
+  ev?.stopPropagation();
+  const {data,error}=await supabaseClient.rpc('gerar_token_ficha',{p_ficha_id:fichaId});
+  if(error){alert('Não foi possível gerar o token: '+error.message);return}
+  document.querySelector('.psyque-token-dialog')?.remove();
+  const wrap=document.createElement('div');wrap.className='psyque-token-dialog';
+  wrap.innerHTML=`<div class="psyque-token-box" onclick="event.stopPropagation()"><h3>🔒 Token da ficha</h3><p>Use este token para vincular esta ficha à Umbra. Gerar um novo token invalida o anterior.</p><code class="psyque-token-value"></code><div class="psyque-token-actions"><button type="button" id="psyqueCopyToken">Copiar token</button><button type="button" id="psyqueRevokeToken">Revogar</button><button type="button" onclick="closePsyqueTokenDialog()">Fechar</button></div></div>`;
+  wrap.onclick=closePsyqueTokenDialog;document.body.appendChild(wrap);wrap.querySelector('.psyque-token-value').textContent=data;
+  wrap.querySelector('#psyqueCopyToken').onclick=async()=>{await navigator.clipboard.writeText(data);wrap.querySelector('#psyqueCopyToken').textContent='Copiado ✓'};
+  wrap.querySelector('#psyqueRevokeToken').onclick=async()=>{let r=await supabaseClient.rpc('revogar_token_ficha',{p_ficha_id:fichaId});if(r.error){alert(r.error.message);return}wrap.querySelector('.psyque-token-value').textContent='Token revogado.';wrap.querySelector('#psyqueRevokeToken').disabled=true};
+}
+
 async function renderList(kind){
   const target=document.getElementById("records-"+kind);
   if(!target) return;
@@ -1407,7 +1430,7 @@ async function renderList(kind){
         ? '<img class="record-card__image" src="'+esc(r.data.imagemPersonagemDados)+'" alt="">'
         : "";
 
-    return '<article class="record-card">'+image+'<h3>'+esc(r.title)+'</h3>'+
+    return '<article class="record-card">'+(kind==="pacientes"?'<button class="psyque-link-lock" title="Token da ficha / Umbra" onclick="psyqueSheetLock(event,\''+r.id+'\')">🔒</button>':"")+image+'<h3>'+esc(r.title)+'</h3>'+
       '<div class="record-meta">Salvo em '+new Date(r.savedAt).toLocaleString("pt-BR")+'</div>'+
       '<div class="record-preview">'+preview+'</div>'+
       '<div class="record-actions">'+
