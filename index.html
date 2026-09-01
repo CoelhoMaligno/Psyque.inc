@@ -932,9 +932,45 @@ const frames = {
 };
 
 const loaded = {};
+const frameLoadTimers = {};
+
+function enviarCargaPendente(kind){
+  const data = pendingLoad[kind];
+  const frame = frames[kind];
+
+  if(!frame || data === null || data === undefined) return false;
+
+  try{
+    frame.contentWindow.postMessage({
+      type:"psyque-load-record",
+      data:data
+    },"*");
+    return true;
+  }catch(error){
+    console.warn("A ficha ainda não está pronta para receber os dados:", error);
+    return false;
+  }
+}
+
+function agendarCargaPendente(kind){
+  if(frameLoadTimers[kind]){
+    clearTimeout(frameLoadTimers[kind]);
+  }
+
+  // Pequena janela para garantir que o DOM/scripts da ficha estejam prontos.
+  frameLoadTimers[kind]=setTimeout(()=>{
+    if(pendingLoad[kind] !== null && pendingLoad[kind] !== undefined){
+      enviarCargaPendente(kind);
+    }
+    frameLoadTimers[kind]=null;
+  },80);
+}
 
 function loadFrame(name) {
-  if (loaded[name]) return;
+  if (loaded[name]) {
+    agendarCargaPendente(name);
+    return;
+  }
   let doc = decodeBase64Utf8(DATA[name]);
 
   // Garante viewport correto para as fichas antigas em celular/tablet.
@@ -1270,8 +1306,20 @@ function loadFrame(name) {
   <\/script>`;
   doc = doc.replace(/<\/body>/i, saveBridge + '</body>');
 
-  frames[name].srcdoc = doc;
+  const frame = frames[name];
+
+  frame.onload = ()=>{
+    // O evento load é um segundo ponto de sincronização.
+    // Se o formulário já estiver pronto, a mensagem será aplicada.
+    agendarCargaPendente(name);
+  };
+
+  frame.srcdoc = doc;
   loaded[name] = true;
+
+  // Também tenta depois da criação do srcdoc, cobrindo navegadores
+  // que não disparam o onload de forma consistente para srcdoc.
+  agendarCargaPendente(name);
 }
 
 function go(name) {
@@ -1341,6 +1389,18 @@ const recordsCache={pacientes:[],criaturas:[],itens:[]};
 
 let usuarioAtual=null;
 let autenticacaoInicializada=false;
+
+window.PSYQUE_DEBUG = {
+  supabase: ()=>({
+    url: SUPABASE_URL,
+    session: !!usuarioAtual,
+    userId: usuarioAtual?.id || null
+  }),
+  records: kind=>recordsCache[kind]||[],
+  open: (kind,id)=>{
+    if(window.openRecord) window.openRecord(kind,id);
+  }
+};
 
 function esc(v){
   return String(v??"").replace(/[&<>"']/g,c=>({
@@ -1630,7 +1690,7 @@ function atualizarAreaUsuario(){
 }
 
 async function getRecords(kind){
-  if(!usuarioAtual || !VALID_KINDS.has(kind)) return [];
+  if(!usuarioAtual || !supabaseClient || !VALID_KINDS.has(kind)) return [];
 
   const {data,error}=await supabaseClient
     .from("fichas")
@@ -1825,6 +1885,10 @@ function openBlankForm(kind){
   currentEdit[kind]=null;
   pendingLoad[kind]=null;
 
+  try{
+    localStorage.removeItem(`psyque_ficha_aberta_${kind}`);
+  }catch(_){}
+
   /*
     Uma ficha nova sempre nasce em um DOM novo.
     Nada da ficha anteriormente aberta permanece no iframe.
@@ -1849,6 +1913,15 @@ window.openRecord=function(kind,id){
 
   currentEdit[kind]=id;
   pendingLoad[kind]=record.data||{};
+
+  // Guarda a ficha aberta para que um F5 não transforme a edição
+  // novamente em uma ficha vazia.
+  try{
+    localStorage.setItem(
+      `psyque_ficha_aberta_${kind}`,
+      JSON.stringify({id:id})
+    );
+  }catch(_){}
 
   /*
     Cada ficha recebe um iframe novo. Assim, quantidade de
@@ -1945,6 +2018,36 @@ function mostrarAplicacao(session){
 
     migrarDadosLocais()
       .then(carregarTodasAsListas)
+      .then(async()=>{
+        // Se a página foi recarregada enquanto uma ficha estava aberta,
+        // recupera o ID salvo e reabre a ficha correta.
+        const kindInicial = ["pacientes","criaturas","itens"].includes(destino)
+          ? destino
+          : null;
+
+        if(kindInicial){
+          try{
+            const raw=localStorage.getItem(`psyque_ficha_aberta_${kindInicial}`);
+            const salvo=raw ? JSON.parse(raw) : null;
+            const id=salvo?.id;
+
+            if(id){
+              const registro=(recordsCache[kindInicial]||[]).find(r=>String(r.id)===String(id));
+
+              if(registro){
+                currentEdit[kindInicial]=registro.id;
+                pendingLoad[kindInicial]=registro.data||{};
+                go(kindInicial);
+                agendarCargaPendente(kindInicial);
+              }else{
+                localStorage.removeItem(`psyque_ficha_aberta_${kindInicial}`);
+              }
+            }
+          }catch(error){
+            console.warn("Não foi possível restaurar a ficha aberta:",error);
+          }
+        }
+      })
       .catch(error=>{
         console.error("Erro de inicialização:",error);
         showToast("Não foi possível carregar todos os dados da conta.");
@@ -2010,14 +2113,14 @@ window.addEventListener("message",e=>{
     saveRecord(e.data.kind,e.data.data||{});
   }
 
-  if(e.data.type==="psyque-form-ready" && pendingLoad[e.data.kind]){
-    try{
-      frames[e.data.kind].contentWindow.postMessage({
-        type:"psyque-load-record",
-        data:pendingLoad[e.data.kind]
-      },"*");
-      pendingLoad[e.data.kind]=null;
-    }catch(_){}
+  if(e.data.type==="psyque-form-ready" && VALID_KINDS.has(e.data.kind)){
+    if(pendingLoad[e.data.kind] !== null && pendingLoad[e.data.kind] !== undefined){
+      if(enviarCargaPendente(e.data.kind)){
+        pendingLoad[e.data.kind]=null;
+      }else{
+        agendarCargaPendente(e.data.kind);
+      }
+    }
   }
 });
 
