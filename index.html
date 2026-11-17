@@ -2262,6 +2262,13 @@ async function criarRegistroAoVivo(kind,data){
   finally{ criandoRegistro[kind]=false; }
 }
 
+function fichaPareceEsvaziada(antigo,novo){
+  try{
+    const a=JSON.stringify(antigo||{}).length, b=JSON.stringify(novo||{}).length;
+    return a>800 && b<a*0.25;
+  }catch(_){return false}
+}
+
 async function syncRecordAoVivo(kind,data,trusted){
   if(!usuarioAtual || !supabaseClient || !VALID_KINDS.has(kind)) return;
   const id=currentEdit[kind];
@@ -2275,6 +2282,11 @@ async function syncRecordAoVivo(kind,data,trusted){
   const executarSync=async()=>{
     liveSyncPendente[kind]=null;
     const payload=payloadFixo;
+    if(fichaPareceEsvaziada(row.data,payload)){
+      console.warn("Proteção: salvamento automático bloqueado (esvaziaria a ficha).");
+      showToast("Proteção ativada: o salvamento automático que apagaria os dados desta ficha foi bloqueado.");
+      return;
+    }
     try{
       const atualizadoEm=new Date().toISOString();
       markLocalWrite(kind,id,payload,atualizadoEm);
@@ -3071,6 +3083,10 @@ setInterval(()=>{if(usuarioAtual&&usuarioAtual!==lastUser){lastUser=usuarioAtual
   /* o site esconde as criaturas de combate da lista normal e, dentro do combate, mostra só as dele */
   window.PSYQUE_FILTRAR_COMBATE = function (kind, rows) {
     if (kind !== "criaturas") return rows;
+    /* PROTECAO: se o combate marcado como ativo nao tem mais criaturas (foi encerrado em outro aparelho/aba),
+       ele deixa de existir e as fichas normais voltam a aparecer. */
+    var ativoValido = ativoId && rows.some(function (r) { return cd(r) && cd(r).id === ativoId; });
+    if (ativoId && !ativoValido) { ativoId = null; try { localStorage.removeItem(KEY); } catch (_) {} }
     return rows.filter(function (r) { return ativoId ? (cd(r) && cd(r).id === ativoId) : !cd(r); });
   };
 
@@ -3114,7 +3130,8 @@ setInterval(()=>{if(usuarioAtual&&usuarioAtual!==lastUser){lastUser=usuarioAtual
     await recarregar(); go("lista-criaturas");
   }
   async function encerrar(id) {
-    var itens = doCombate(id);
+    var itens = doCombate(id).filter(function (r) { return !r.shared && cd(r) && cd(r).origem && String(r.ownerId) === String(usuarioAtual.id); });
+    if (!itens.length) { showToast("Nada para encerrar neste combate."); return; }
     if (!confirm("Encerrar o combate \"" + (itens[0] ? cd(itens[0]).nome : "") + "\" e apagar as " + itens.length + " criaturas dele? As fichas originais não são afetadas.")) return;
     var ids = itens.map(function (r) { return r.id; });
     var x = await supabaseClient.from("fichas").delete().in("id", ids);
